@@ -21,6 +21,30 @@ app.UsePathBase("/ln-address")
     .UseDefaultFiles()
     .UseStaticFiles();
 
+// QR Code resource endpoints
+app.MapGet("/qr/{invoice}", (string invoice) =>
+{
+    try
+    {
+        var qrCodeBase64 = LnAddressTools.GenerateQrCodeBase64Public(invoice);
+        if (string.IsNullOrEmpty(qrCodeBase64))
+        {
+            return Results.BadRequest("Failed to generate QR code");
+        }
+
+        // Extract the base64 part and return as SVG
+        var base64Data = qrCodeBase64.Replace("svg+xml;base64,", "");
+        var svgBytes = Convert.FromBase64String(base64Data);
+        var svgContent = System.Text.Encoding.UTF8.GetString(svgBytes);
+        
+        return Results.Content(svgContent, "image/svg+xml");
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest($"Error generating QR code: {ex.Message}");
+    }
+});
+
 app.MapMcp("/mcp");
 
 await app.RunAsync();
@@ -31,6 +55,11 @@ public static class LnAddressTools
     private static readonly ILogger _logger = LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger("LnAddressTools");
 
     private static string GenerateQrCodeBase64(string text, int border = 2, int scale = 8)
+    {
+        return GenerateQrCodeBase64Public(text, border, scale);
+    }
+
+    public static string GenerateQrCodeBase64Public(string text, int border = 2, int scale = 8)
     {
         try
         {
@@ -172,6 +201,13 @@ public static class LnAddressTools
                 result.AppendLine($"![QR Code](data:image/{qrCodeBase64})");
                 result.AppendLine();
                 result.AppendLine("💡 Scan this QR code with any Lightning wallet to pay the invoice!");
+                result.AppendLine();
+                
+                // Add resource URL for direct QR code access
+                var encodedInvoice = Uri.EscapeDataString(invoiceData.Pr);
+                result.AppendLine("🔗 Direct QR Code Resource:");
+                result.AppendLine($"   • SVG Format: https://sup3r.cool/ln-address/qr/{encodedInvoice}");
+                result.AppendLine("   • Use this URL to access the QR code as a standalone resource");
                 result.AppendLine();
             }
 
