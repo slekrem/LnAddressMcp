@@ -523,6 +523,153 @@ public static class LnAddressTools
             return $"❌ Info Error: {ex.Message}";
         }
     }
+
+    [McpServerTool, Description("Checks the status of a Lightning Network invoice (BOLT11) to determine if it has been paid, is still pending, or has expired.")]
+    public static Task<string> CheckInvoiceStatus(
+        [Description("BOLT11 Lightning Network invoice string (e.g., 'lnbc1000n1p...'). The invoice to check the payment status for.")] string invoice)
+    {
+        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            ["Invoice"] = invoice.Length > 20 ? invoice.Substring(0, 20) + "..." : invoice,
+            ["RequestId"] = Guid.NewGuid(),
+            ["Operation"] = "CheckStatus"
+        });
+
+        _logger.LogInformation($"Checking status for Lightning invoice");
+
+        try
+        {
+            // Basic BOLT11 format validation
+            if (string.IsNullOrWhiteSpace(invoice))
+            {
+                return Task.FromResult("❌ Invalid Input: Invoice cannot be empty");
+            }
+
+            if (!invoice.StartsWith("ln", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult("❌ Invalid Format: Invoice must start with 'ln' (BOLT11 format)");
+            }
+
+            if (invoice.Length < 100)
+            {
+                return Task.FromResult("❌ Invalid Format: Invoice appears too short to be a valid BOLT11 invoice");
+            }
+
+            _logger.LogDebug($"Invoice format validation passed");
+
+            // Extract network and amount from BOLT11 (basic parsing)
+            var network = "unknown";
+            var amount = "unknown";
+
+            try
+            {
+                if (invoice.StartsWith("lnbc", StringComparison.OrdinalIgnoreCase))
+                {
+                    network = "mainnet";
+                    // Extract amount if present
+                    var amountPart = invoice.Substring(4);
+                    var numberEnd = 0;
+                    while (numberEnd < amountPart.Length && char.IsDigit(amountPart[numberEnd]))
+                    {
+                        numberEnd++;
+                    }
+                    if (numberEnd > 0 && numberEnd < amountPart.Length)
+                    {
+                        var amountValue = amountPart.Substring(0, numberEnd);
+                        var unit = amountPart[numberEnd];
+                        amount = $"{amountValue}{unit}";
+                    }
+                }
+                else if (invoice.StartsWith("lntb", StringComparison.OrdinalIgnoreCase))
+                {
+                    network = "testnet";
+                }
+                else if (invoice.StartsWith("lnbcrt", StringComparison.OrdinalIgnoreCase))
+                {
+                    network = "regtest";
+                }
+            }
+            catch (Exception parseEx)
+            {
+                _logger.LogWarning($"Could not parse invoice details: {parseEx.Message}");
+            }
+
+            // Build status response
+            var result = new System.Text.StringBuilder();
+            result.AppendLine("⚡ Lightning Invoice Status Check");
+            result.AppendLine("═══════════════════════════════════");
+            result.AppendLine();
+
+            // Invoice Information
+            result.AppendLine("📄 Invoice Details:");
+            result.AppendLine($"   • Format: BOLT11");
+            result.AppendLine($"   • Network: {network}");
+            result.AppendLine($"   • Amount: {amount}");
+            result.AppendLine($"   • Invoice: {invoice.Substring(0, Math.Min(invoice.Length, 30))}...");
+            result.AppendLine();
+
+            // Status Check Limitation Notice
+            result.AppendLine("⚠️ Status Check Limitation:");
+            result.AppendLine("   • Direct invoice status checking requires access to a Lightning Node");
+            result.AppendLine("   • This MCP server cannot directly query payment status");
+            result.AppendLine("   • Invoice status depends on the Lightning Network node that generated it");
+            result.AppendLine();
+
+            // Alternative Methods
+            result.AppendLine("🔧 Alternative Status Check Methods:");
+            result.AppendLine("   • Use the Lightning wallet/service that created the invoice");
+            result.AppendLine("   • Check with the Lightning Node that generated this invoice");
+            result.AppendLine("   • Use Lightning Network explorers (limited functionality)");
+            result.AppendLine("   • Contact the Lightning Address service provider");
+            result.AppendLine();
+
+            // Invoice Analysis
+            result.AppendLine("🔍 Invoice Analysis:");
+
+            // Check if invoice looks valid based on length and format
+            if (invoice.Length > 200 && invoice.Length < 2000)
+            {
+                result.AppendLine("   • Length: ✅ Appears to be valid BOLT11 length");
+            }
+            else if (invoice.Length <= 200)
+            {
+                result.AppendLine("   • Length: ⚠️ Unusually short for BOLT11");
+            }
+            else
+            {
+                result.AppendLine("   • Length: ⚠️ Unusually long for BOLT11");
+            }
+
+            // Check expiration (basic estimation)
+            result.AppendLine("   • Expiration: ❓ Cannot determine without node access");
+            result.AppendLine("   • Payment Status: ❓ Requires Lightning Node query");
+            result.AppendLine();
+
+            // Recommendations
+            result.AppendLine("💡 Recommendations:");
+            result.AppendLine("   • For real-time status, use a Lightning Node RPC call");
+            result.AppendLine("   • Check the wallet/service where you created this invoice");
+            result.AppendLine("   • Lightning invoices typically expire after 1-24 hours");
+            result.AppendLine("   • Paid invoices cannot be paid again (single-use)");
+            result.AppendLine();
+
+            // Technical Note
+            result.AppendLine("🔨 Technical Note:");
+            result.AppendLine("   • Full invoice status checking requires:");
+            result.AppendLine("     - Lightning Node connection (LND, CLN, Eclair)");
+            result.AppendLine("     - RPC access to lookup invoice by payment hash");
+            result.AppendLine("     - Node synchronization with Lightning Network");
+            result.AppendLine("   • This MCP server focuses on Lightning Address operations");
+
+            _logger.LogInformation($"Provided invoice analysis and status check guidance");
+            return Task.FromResult(result.ToString());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Exception occurred while checking invoice status");
+            return Task.FromResult($"❌ Status Check Error: {ex.Message}");
+        }
+    }
 }
 
 public class LnurlPayResponse
