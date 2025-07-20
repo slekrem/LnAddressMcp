@@ -135,6 +135,164 @@ public static class LnAddressTools
             return $"Error: {ex.Message}";
         }
     }
+
+    [McpServerTool, Description("Validates a Lightning Address and returns detailed information about its capabilities, limits, and metadata.")]
+    public static async Task<string> ValidateAddress(
+        [Description("Lightning Address in email format (e.g., 'alice@wallet.com', 'bob@zaphq.io'). The address to validate and get information about.")] string address)
+    {
+        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            ["LightningAddress"] = address,
+            ["RequestId"] = Guid.NewGuid(),
+            ["Operation"] = "Validate"
+        });
+
+        _logger.LogInformation($"Starting validation for Lightning Address: {address}");
+
+        try
+        {
+            using var client = new HttpClient();
+
+            // Parse lightning address
+            var parts = address.Split('@');
+            if (parts.Length != 2)
+            {
+                _logger.LogError($"Invalid lightning address format: {address}");
+                return "❌ Invalid Format: Lightning address must be in format user@domain.com";
+            }
+
+            var username = parts[0];
+            var domain = parts[1];
+
+            // Basic format validation
+            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(domain))
+            {
+                return "❌ Invalid Format: Username and domain cannot be empty";
+            }
+
+            if (!domain.Contains('.'))
+            {
+                return "❌ Invalid Format: Domain must contain at least one dot";
+            }
+
+            _logger.LogDebug($"Validating Lightning Address - Username: {username}, Domain: {domain}");
+
+            // Check LNURL Pay endpoint
+            var lnurlEndpoint = $"https://{domain}/.well-known/lnurlp/{username}";
+            _logger.LogDebug($"Checking LNURL endpoint: {lnurlEndpoint}");
+
+            var lnurlResponse = await client.GetAsync(lnurlEndpoint);
+
+            if (!lnurlResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning($"LNURL endpoint not reachable. Status: {lnurlResponse.StatusCode}, Endpoint: {lnurlEndpoint}");
+                return $"❌ Address Not Found: Lightning Address not available (HTTP {lnurlResponse.StatusCode})";
+            }
+
+            var lnurlContent = await lnurlResponse.Content.ReadAsStringAsync();
+            _logger.LogDebug($"LNURL response received: {lnurlContent}");
+
+            var lnurlData = JsonSerializer.Deserialize<LnurlPayResponse>(lnurlContent);
+
+            if (lnurlData == null)
+            {
+                return "❌ Invalid Response: Could not parse LNURL Pay response";
+            }
+
+            if (lnurlData.Tag != "payRequest")
+            {
+                return $"❌ Invalid Protocol: Expected 'payRequest', got '{lnurlData.Tag}'";
+            }
+
+            // Build validation result
+            var result = new System.Text.StringBuilder();
+            result.AppendLine("✅ Lightning Address Valid!");
+            result.AppendLine();
+            result.AppendLine($"📧 Address: {address}");
+            result.AppendLine($"🌐 Domain: {domain}");
+            result.AppendLine($"👤 Username: {username}");
+            result.AppendLine();
+
+            // Payment limits
+            var minSats = lnurlData.MinSendable / 1000;
+            var maxSats = lnurlData.MaxSendable / 1000;
+            result.AppendLine("💰 Payment Limits:");
+            result.AppendLine($"   • Minimum: {minSats:N0} sats");
+            result.AppendLine($"   • Maximum: {maxSats:N0} sats");
+            result.AppendLine();
+
+            // Parse metadata for additional info
+            if (!string.IsNullOrEmpty(lnurlData.Metadata))
+            {
+                try
+                {
+                    var metadata = JsonSerializer.Deserialize<string[][]>(lnurlData.Metadata);
+                    if (metadata != null && metadata.Length > 0)
+                    {
+                        result.AppendLine("ℹ️ Metadata:");
+                        foreach (var item in metadata)
+                        {
+                            if (item.Length >= 2)
+                            {
+                                var type = item[0];
+                                var value = item[1];
+
+                                switch (type)
+                                {
+                                    case "text/plain":
+                                        result.AppendLine($"   • Description: {value}");
+                                        break;
+                                    case "text/identifier":
+                                        result.AppendLine($"   • Identifier: {value}");
+                                        break;
+                                    case "text/email":
+                                        result.AppendLine($"   • Email: {value}");
+                                        break;
+                                }
+                            }
+                        }
+                        result.AppendLine();
+                    }
+                }
+                catch (Exception metaEx)
+                {
+                    _logger.LogWarning($"Could not parse metadata: {metaEx.Message}");
+                }
+            }
+
+            // Additional features
+            result.AppendLine("🔧 Features:");
+            result.AppendLine("   • LNURL Pay: ✅ Supported");
+            
+            if (lnurlData.CommentAllowed > 0)
+            {
+                result.AppendLine($"   • Comments: ✅ Up to {lnurlData.CommentAllowed} characters");
+            }
+            else
+            {
+                result.AppendLine("   • Comments: ❌ Not supported");
+            }
+
+            // Callback URL validation
+            if (!string.IsNullOrEmpty(lnurlData.Callback))
+            {
+                result.AppendLine($"   • Callback URL: ✅ {lnurlData.Callback}");
+            }
+
+            _logger.LogInformation($"Successfully validated Lightning Address: {address}");
+            return result.ToString();
+        }
+        catch (HttpRequestException httpEx)
+        {
+            _logger.LogError(httpEx, $"Network error while validating {address}");
+            return $"❌ Network Error: Could not reach Lightning Address service ({httpEx.Message})";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Exception occurred while validating {address}");
+            return $"❌ Validation Error: {ex.Message}";
+        }
+    }
 }
 
 public class LnurlPayResponse
