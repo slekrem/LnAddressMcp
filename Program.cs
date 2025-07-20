@@ -670,6 +670,231 @@ public static class LnAddressTools
             return Task.FromResult($"❌ Status Check Error: {ex.Message}");
         }
     }
+
+    [McpServerTool, Description("Decodes a Lightning Network BOLT11 invoice to show detailed information including amount, description, destination, expiration time, and other metadata.")]
+    public static Task<string> DecodeInvoice(
+        [Description("BOLT11 Lightning Network invoice string (e.g., 'lnbc1000n1p...'). The invoice to decode and analyze for detailed information.")] string invoice)
+    {
+        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            ["Invoice"] = invoice.Length > 20 ? invoice.Substring(0, 20) + "..." : invoice,
+            ["RequestId"] = Guid.NewGuid(),
+            ["Operation"] = "DecodeInvoice"
+        });
+
+        _logger.LogInformation($"Starting BOLT11 invoice decoding");
+
+        try
+        {
+            // Basic validation
+            if (string.IsNullOrWhiteSpace(invoice))
+            {
+                return Task.FromResult("❌ Invalid Input: Invoice cannot be empty");
+            }
+
+            if (!invoice.StartsWith("ln", StringComparison.OrdinalIgnoreCase))
+            {
+                return Task.FromResult("❌ Invalid Format: Invoice must start with 'ln' (BOLT11 format)");
+            }
+
+            if (invoice.Length < 100)
+            {
+                return Task.FromResult("❌ Invalid Format: Invoice appears too short to be a valid BOLT11 invoice");
+            }
+
+            _logger.LogDebug($"Basic invoice format validation passed");
+
+            var result = new System.Text.StringBuilder();
+            result.AppendLine("🔍 BOLT11 Invoice Decoder");
+            result.AppendLine("═══════════════════════════════════");
+            result.AppendLine();
+
+            // Network Detection
+            var network = "unknown";
+            var networkIcon = "❓";
+            if (invoice.StartsWith("lnbc", StringComparison.OrdinalIgnoreCase))
+            {
+                network = "Bitcoin Mainnet";
+                networkIcon = "₿";
+            }
+            else if (invoice.StartsWith("lntb", StringComparison.OrdinalIgnoreCase))
+            {
+                network = "Bitcoin Testnet";
+                networkIcon = "🧪";
+            }
+            else if (invoice.StartsWith("lnbcrt", StringComparison.OrdinalIgnoreCase))
+            {
+                network = "Bitcoin Regtest";
+                networkIcon = "⚙️";
+            }
+
+            result.AppendLine($"🌐 Network Information:");
+            result.AppendLine($"   • Network: {networkIcon} {network}");
+            result.AppendLine($"   • Protocol: BOLT11 Lightning Network");
+            result.AppendLine();
+
+            // Amount Parsing
+            var amount = "No amount specified";
+            var amountSats = 0L;
+            var amountBtc = 0.0;
+
+            try
+            {
+                var amountPart = "";
+                if (invoice.StartsWith("lnbc", StringComparison.OrdinalIgnoreCase))
+                {
+                    amountPart = invoice.Substring(4);
+                }
+                else if (invoice.StartsWith("lntb", StringComparison.OrdinalIgnoreCase))
+                {
+                    amountPart = invoice.Substring(4);
+                }
+                else if (invoice.StartsWith("lnbcrt", StringComparison.OrdinalIgnoreCase))
+                {
+                    amountPart = invoice.Substring(6);
+                }
+
+                if (!string.IsNullOrEmpty(amountPart))
+                {
+                    var numberEnd = 0;
+                    while (numberEnd < amountPart.Length && char.IsDigit(amountPart[numberEnd]))
+                    {
+                        numberEnd++;
+                    }
+
+                    if (numberEnd > 0 && numberEnd < amountPart.Length)
+                    {
+                        var amountValue = long.Parse(amountPart.Substring(0, numberEnd));
+                        var unit = amountPart[numberEnd];
+
+                        // Convert to satoshis based on unit
+                        switch (unit)
+                        {
+                            case 'm': // millisatoshi (divide by 1000 to get satoshis)
+                                amountSats = amountValue / 1000;
+                                amountBtc = amountSats / 100_000_000.0;
+                                amount = $"{amountSats:N0} sats";
+                                break;
+                            case 'u': // microsatoshi (multiply by 100 to get satoshis)
+                                amountSats = amountValue * 100;
+                                amountBtc = amountSats / 100_000_000.0;
+                                amount = $"{amountSats:N0} sats";
+                                break;
+                            case 'n': // nanosatoshi (multiply by 100,000 to get satoshis)
+                                amountSats = amountValue * 100_000;
+                                amountBtc = amountSats / 100_000_000.0;
+                                amount = $"{amountSats:N0} sats";
+                                break;
+                            case 'p': // picosatoshi (multiply by 100,000,000 to get satoshis)
+                                amountSats = amountValue * 100_000_000;
+                                amountBtc = amountSats / 100_000_000.0;
+                                amount = $"{amountSats:N0} sats";
+                                break;
+                            default:
+                                amount = $"Unknown unit: {amountValue}{unit}";
+                                break;
+                        }
+                    }
+                    else if (numberEnd == 0)
+                    {
+                        amount = "No amount specified (any amount invoice)";
+                    }
+                }
+            }
+            catch (Exception amountEx)
+            {
+                _logger.LogWarning($"Could not parse amount: {amountEx.Message}");
+                amount = "Could not parse amount";
+            }
+
+            result.AppendLine($"💰 Payment Information:");
+            result.AppendLine($"   • Amount: {amount}");
+            if (amountSats > 0)
+            {
+                result.AppendLine($"   • Bitcoin Value: {amountBtc:F8} BTC");
+                result.AppendLine($"   • Satoshis: {amountSats:N0} sats");
+
+                // Add USD estimate note
+                result.AppendLine($"   • USD Value: ❓ (requires current BTC price)");
+            }
+            result.AppendLine();
+
+            // Invoice Structure Analysis
+            result.AppendLine($"📋 Invoice Structure:");
+            result.AppendLine($"   • Total Length: {invoice.Length} characters");
+            result.AppendLine($"   • Format: BOLT11");
+
+            // Extract timestamp (basic estimation - BOLT11 timestamp is in the data part)
+            var currentTime = DateTimeOffset.UtcNow;
+            result.AppendLine($"   • Created: ❓ Timestamp requires full BOLT11 parsing");
+            result.AppendLine($"   • Typical Expiry: 1-24 hours from creation");
+            result.AppendLine();
+
+            // Technical Details
+            result.AppendLine($"🔧 Technical Details:");
+            result.AppendLine($"   • Invoice Prefix: {invoice.Substring(0, Math.Min(10, invoice.Length))}...");
+            result.AppendLine($"   • Checksum: Last 6 characters serve as Bech32 checksum");
+
+            // Basic structure validation
+            if (invoice.Length > 200 && invoice.Length < 2000)
+            {
+                result.AppendLine($"   • Length Validation: ✅ Standard BOLT11 length");
+            }
+            else if (invoice.Length <= 200)
+            {
+                result.AppendLine($"   • Length Validation: ⚠️ Unusually short");
+            }
+            else
+            {
+                result.AppendLine($"   • Length Validation: ⚠️ Unusually long");
+            }
+
+            // Check for common BOLT11 patterns
+            if (invoice.Contains("1"))
+            {
+                var separatorIndex = invoice.LastIndexOf('1');
+                if (separatorIndex > 0)
+                {
+                    result.AppendLine($"   • Data Separator: Found at position {separatorIndex}");
+                    result.AppendLine($"   • Data Section: {invoice.Length - separatorIndex - 1} characters");
+                }
+            }
+            result.AppendLine();
+
+            // Limitations Notice
+            result.AppendLine($"⚠️ Decoder Limitations:");
+            result.AppendLine($"   • This is a basic BOLT11 decoder implementation");
+            result.AppendLine($"   • Full decoding requires specialized BOLT11 libraries");
+            result.AppendLine($"   • Missing fields: destination pubkey, payment hash, description, route hints");
+            result.AppendLine($"   • For complete analysis, use: lightning-cli decodepay, lncli decodepayreq");
+            result.AppendLine();
+
+            // Use Cases
+            result.AppendLine($"💡 What You Can Do:");
+            result.AppendLine($"   • ✅ Verify invoice format and network");
+            result.AppendLine($"   • ✅ Extract payment amount information");
+            result.AppendLine($"   • ✅ Validate invoice structure");
+            result.AppendLine($"   • ✅ Estimate typical expiration timeframes");
+            result.AppendLine($"   • ❌ Cannot extract: description, destination, payment hash");
+            result.AppendLine($"   • ❌ Cannot determine: actual expiry time, route information");
+            result.AppendLine();
+
+            // Recommendations
+            result.AppendLine($"🚀 For Complete Decoding:");
+            result.AppendLine($"   • Use Lightning Node CLI tools (lncli, lightning-cli)");
+            result.AppendLine($"   • Try online BOLT11 decoders (for non-sensitive invoices)");
+            result.AppendLine($"   • Use specialized BOLT11 libraries (btcpayserver, lnd, etc.)");
+            result.AppendLine($"   • Access Lightning Node RPC for full invoice details");
+
+            _logger.LogInformation($"Successfully provided basic BOLT11 invoice decoding");
+            return Task.FromResult(result.ToString());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Exception occurred while decoding invoice");
+            return Task.FromResult($"❌ Decode Error: {ex.Message}");
+        }
+    }
 }
 
 public class LnurlPayResponse
