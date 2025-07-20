@@ -82,16 +82,18 @@ public static class LnAddressTools
     [McpServerTool, Description("Creates a Lightning Network invoice (payment request) from a Lightning Address. Returns a BOLT11 invoice string that can be used to receive Bitcoin payments over the Lightning Network.")]
     public static async Task<string> CreateInvoice(
         [Description("Lightning Address in email format (e.g., 'alice@wallet.com', 'bob@zaphq.io'). This is the recipient's Lightning Address where the payment will be sent.")] string address,
-        [Description("Payment amount in satoshis (1 BTC = 100,000,000 satoshis). Must be within the recipient's min/max limits. Example: 1000 for 0.00001000 BTC.")] int amount)
+        [Description("Payment amount in satoshis (1 BTC = 100,000,000 satoshis). Must be within the recipient's min/max limits. Example: 1000 for 0.00001000 BTC.")] int amount,
+        [Description("Optional comment/memo for the payment (e.g., 'Coffee payment', 'Invoice #123'). Will be included in the invoice description if the recipient supports comments.")] string? comment = null)
     {
         using var scope = _logger.BeginScope(new Dictionary<string, object>
         {
             ["LightningAddress"] = address,
             ["AmountSats"] = amount,
+            ["Comment"] = comment ?? "",
             ["RequestId"] = Guid.NewGuid()
         });
 
-        _logger.LogInformation($"Starting invoice creation for {address} with amount {amount} sats");
+        _logger.LogInformation($"Starting invoice creation for {address} with amount {amount} sats{(string.IsNullOrEmpty(comment) ? "" : $" and comment '{comment}'")}");
 
         try
         {
@@ -148,6 +150,30 @@ public static class LnAddressTools
 
             // Step 2: Request invoice from callback
             var callbackUrl = $"{lnurlData.Callback}?amount={amountMsat}&nonce={Guid.NewGuid()}";
+            
+            // Add comment if provided and supported
+            if (!string.IsNullOrEmpty(comment))
+            {
+                if (lnurlData.CommentAllowed > 0)
+                {
+                    if (comment.Length <= lnurlData.CommentAllowed)
+                    {
+                        callbackUrl += $"&comment={Uri.EscapeDataString(comment)}";
+                        _logger.LogDebug($"Adding comment to callback: {comment}");
+                    }
+                    else
+                    {
+                        _logger.LogWarning($"Comment too long ({comment.Length} chars, max: {lnurlData.CommentAllowed}). Truncating.");
+                        var truncatedComment = comment.Substring(0, lnurlData.CommentAllowed);
+                        callbackUrl += $"&comment={Uri.EscapeDataString(truncatedComment)}";
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning($"Comment provided but not supported by {address}");
+                }
+            }
+            
             _logger.LogDebug($"Requesting invoice from callback: {callbackUrl}");
 
             var invoiceResponse = await client.GetAsync(callbackUrl);
@@ -187,6 +213,24 @@ public static class LnAddressTools
             result.AppendLine();
             result.AppendLine($"📧 Lightning Address: {address}");
             result.AppendLine($"💰 Amount: {amount:N0} sats");
+            
+            // Show comment status
+            if (!string.IsNullOrEmpty(comment))
+            {
+                if (lnurlData.CommentAllowed > 0)
+                {
+                    var finalComment = comment.Length <= lnurlData.CommentAllowed ? comment : comment.Substring(0, lnurlData.CommentAllowed);
+                    result.AppendLine($"💬 Comment: {finalComment}");
+                    if (comment.Length > lnurlData.CommentAllowed)
+                    {
+                        result.AppendLine($"   ⚠️ Comment was truncated to {lnurlData.CommentAllowed} characters");
+                    }
+                }
+                else
+                {
+                    result.AppendLine($"💬 Comment: (not supported by recipient)");
+                }
+            }
             result.AppendLine();
             result.AppendLine("📄 BOLT11 Invoice:");
             result.AppendLine($"```");
