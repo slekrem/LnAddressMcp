@@ -194,22 +194,12 @@ public static class LnAddressTools
             result.AppendLine($"```");
             result.AppendLine();
 
-            if (!string.IsNullOrEmpty(qrCodeBase64))
-            {
-                result.AppendLine("📱 QR Code for Mobile Wallet:");
-                result.AppendLine();
-                result.AppendLine($"![QR Code](data:image/{qrCodeBase64})");
-                result.AppendLine();
-                result.AppendLine("💡 Scan this QR code with any Lightning wallet to pay the invoice!");
-                result.AppendLine();
-                
-                // Add resource URL for direct QR code access
-                var encodedInvoice = Uri.EscapeDataString(invoiceData.Pr);
-                result.AppendLine("🔗 Direct QR Code Resource:");
-                result.AppendLine($"   • SVG Format: https://sup3r.cool/ln-address/qr/{encodedInvoice}");
-                result.AppendLine("   • Use this URL to access the QR code as a standalone resource");
-                result.AppendLine();
-            }
+            // Add QR code resource URL
+            var encodedInvoice = Uri.EscapeDataString(invoiceData.Pr);
+            result.AppendLine("📱 QR Code for Mobile Wallet:");
+            result.AppendLine($"   🔗 https://sup3r.cool/ln-address/qr/{encodedInvoice}");
+            result.AppendLine("   💡 Scan this QR code with any Lightning wallet to pay the invoice!");
+            result.AppendLine();
 
             result.AppendLine("✅ Ready to receive payment!");
             result.AppendLine("⚠️ Invoice typically expires in 1-24 hours");
