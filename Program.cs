@@ -46,6 +46,7 @@ public static class LnAddressTools
         try
         {
             using var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
 
             // Parse lightning address
             var parts = address.Split('@');
@@ -152,6 +153,7 @@ public static class LnAddressTools
         try
         {
             using var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
 
             // Parse lightning address
             var parts = address.Split('@');
