@@ -265,7 +265,7 @@ public static class LnAddressTools
             // Additional features
             result.AppendLine("🔧 Features:");
             result.AppendLine("   • LNURL Pay: ✅ Supported");
-            
+
             if (lnurlData.CommentAllowed > 0)
             {
                 result.AppendLine($"   • Comments: ✅ Up to {lnurlData.CommentAllowed} characters");
@@ -293,6 +293,234 @@ public static class LnAddressTools
         {
             _logger.LogError(ex, $"Exception occurred while validating {address}");
             return $"❌ Validation Error: {ex.Message}";
+        }
+    }
+
+    [McpServerTool, Description("Gets comprehensive information about a Lightning Address including metadata, service provider details, and supported features.")]
+    public static async Task<string> GetAddressInfo(
+        [Description("Lightning Address in email format (e.g., 'alice@wallet.com', 'bob@zaphq.io'). The address to get detailed information about.")] string address)
+    {
+        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            ["LightningAddress"] = address,
+            ["RequestId"] = Guid.NewGuid(),
+            ["Operation"] = "GetInfo"
+        });
+
+        _logger.LogInformation($"Getting detailed information for Lightning Address: {address}");
+
+        try
+        {
+            using var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36");
+
+            // Parse lightning address
+            var parts = address.Split('@');
+            if (parts.Length != 2)
+            {
+                _logger.LogError($"Invalid lightning address format: {address}");
+                return "❌ Invalid Format: Lightning address must be in format user@domain.com";
+            }
+
+            var username = parts[0];
+            var domain = parts[1];
+
+            _logger.LogDebug($"Getting info for Lightning Address - Username: {username}, Domain: {domain}");
+
+            // Get LNURL Pay information
+            var lnurlEndpoint = $"https://{domain}/.well-known/lnurlp/{username}";
+            _logger.LogDebug($"Fetching LNURL endpoint: {lnurlEndpoint}");
+
+            var lnurlResponse = await client.GetAsync(lnurlEndpoint);
+
+            if (!lnurlResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning($"LNURL endpoint not reachable. Status: {lnurlResponse.StatusCode}, Endpoint: {lnurlEndpoint}");
+                return $"❌ Address Not Found: Lightning Address not available (HTTP {lnurlResponse.StatusCode})";
+            }
+
+            var lnurlContent = await lnurlResponse.Content.ReadAsStringAsync();
+            _logger.LogDebug($"LNURL response received: {lnurlContent}");
+
+            var lnurlData = JsonSerializer.Deserialize<LnurlPayResponse>(lnurlContent);
+
+            if (lnurlData == null || lnurlData.Tag != "payRequest")
+            {
+                return "❌ Invalid Response: Not a valid Lightning Address";
+            }
+
+            // Build comprehensive info
+            var result = new System.Text.StringBuilder();
+            result.AppendLine("📋 Lightning Address Information");
+            result.AppendLine("═══════════════════════════════════");
+            result.AppendLine();
+
+            // Basic Information
+            result.AppendLine("📧 Contact Details:");
+            result.AppendLine($"   • Address: {address}");
+            result.AppendLine($"   • Domain: {domain}");
+            result.AppendLine($"   • Username: {username}");
+            result.AppendLine();
+
+            // Service Provider Info
+            result.AppendLine("🏢 Service Provider:");
+            result.AppendLine($"   • Domain: {domain}");
+            result.AppendLine($"   • LNURL Endpoint: {lnurlEndpoint}");
+
+            // Try to get domain info
+            try
+            {
+                var domainInfo = await client.GetAsync($"https://{domain}");
+                if (domainInfo.IsSuccessStatusCode)
+                {
+                    result.AppendLine($"   • Website Status: ✅ Online");
+                }
+                else
+                {
+                    result.AppendLine($"   • Website Status: ⚠️ HTTP {domainInfo.StatusCode}");
+                }
+            }
+            catch
+            {
+                result.AppendLine($"   • Website Status: ❓ Unknown");
+            }
+            result.AppendLine();
+
+            // Payment Configuration
+            var minSats = lnurlData.MinSendable / 1000;
+            var maxSats = lnurlData.MaxSendable / 1000;
+            var minBtc = minSats / 100_000_000.0;
+            var maxBtc = maxSats / 100_000_000.0;
+
+            result.AppendLine("💰 Payment Configuration:");
+            result.AppendLine($"   • Minimum: {minSats:N0} sats ({minBtc:F8} BTC)");
+            result.AppendLine($"   • Maximum: {maxSats:N0} sats ({maxBtc:F8} BTC)");
+            result.AppendLine($"   • Range: {(maxSats - minSats):N0} sats difference");
+            result.AppendLine();
+
+            // Metadata Analysis
+            if (!string.IsNullOrEmpty(lnurlData.Metadata))
+            {
+                result.AppendLine("ℹ️ Metadata & Profile:");
+                try
+                {
+                    var metadata = JsonSerializer.Deserialize<string[][]>(lnurlData.Metadata);
+                    if (metadata != null && metadata.Length > 0)
+                    {
+                        var hasDescription = false;
+                        var hasIdentifier = false;
+                        var hasEmail = false;
+                        var hasImage = false;
+
+                        foreach (var item in metadata)
+                        {
+                            if (item.Length >= 2)
+                            {
+                                var type = item[0];
+                                var value = item[1];
+
+                                switch (type)
+                                {
+                                    case "text/plain":
+                                        result.AppendLine($"   • Description: {value}");
+                                        hasDescription = true;
+                                        break;
+                                    case "text/identifier":
+                                        result.AppendLine($"   • Identifier: {value}");
+                                        hasIdentifier = true;
+                                        break;
+                                    case "text/email":
+                                        result.AppendLine($"   • Email: {value}");
+                                        hasEmail = true;
+                                        break;
+                                    case "image/png":
+                                    case "image/jpeg":
+                                        result.AppendLine($"   • Avatar: ✅ {type} image available");
+                                        hasImage = true;
+                                        break;
+                                }
+                            }
+                        }
+
+                        if (!hasDescription) result.AppendLine("   • Description: ❌ Not provided");
+                        if (!hasIdentifier) result.AppendLine("   • Identifier: ❌ Not provided");
+                        if (!hasEmail) result.AppendLine("   • Email: ❌ Not provided");
+                        if (!hasImage) result.AppendLine("   • Avatar: ❌ No image");
+                    }
+                    else
+                    {
+                        result.AppendLine("   • No metadata available");
+                    }
+                }
+                catch (Exception metaEx)
+                {
+                    _logger.LogWarning($"Could not parse metadata: {metaEx.Message}");
+                    result.AppendLine("   • ⚠️ Metadata parsing failed");
+                }
+                result.AppendLine();
+            }
+
+            // Technical Features
+            result.AppendLine("🔧 Technical Features:");
+            result.AppendLine("   • Protocol: LNURL Pay");
+            result.AppendLine($"   • Callback URL: {lnurlData.Callback}");
+
+            if (lnurlData.CommentAllowed > 0)
+            {
+                result.AppendLine($"   • Comments: ✅ Up to {lnurlData.CommentAllowed} chars");
+            }
+            else
+            {
+                result.AppendLine("   • Comments: ❌ Not supported");
+            }
+
+            // Check if callback URL is accessible
+            try
+            {
+                var callbackTest = await client.GetAsync(lnurlData.Callback + "?amount=1000&nonce=test");
+                if (callbackTest.IsSuccessStatusCode)
+                {
+                    result.AppendLine("   • Callback Status: ✅ Responsive");
+                }
+                else
+                {
+                    result.AppendLine($"   • Callback Status: ⚠️ HTTP {callbackTest.StatusCode}");
+                }
+            }
+            catch
+            {
+                result.AppendLine("   • Callback Status: ❓ Test failed");
+            }
+
+            result.AppendLine();
+
+            // Usage Recommendations
+            result.AppendLine("💡 Usage Recommendations:");
+            if (maxSats >= 100_000_000) // 1 BTC
+            {
+                result.AppendLine("   • ✅ Suitable for large payments");
+            }
+            if (minSats <= 1000) // 1000 sats
+            {
+                result.AppendLine("   • ✅ Good for microtransactions");
+            }
+            if (lnurlData.CommentAllowed > 0)
+            {
+                result.AppendLine("   • ✅ Supports payment memos");
+            }
+
+            _logger.LogInformation($"Successfully retrieved info for Lightning Address: {address}");
+            return result.ToString();
+        }
+        catch (HttpRequestException httpEx)
+        {
+            _logger.LogError(httpEx, $"Network error while getting info for {address}");
+            return $"❌ Network Error: Could not reach Lightning Address service ({httpEx.Message})";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Exception occurred while getting info for {address}");
+            return $"❌ Info Error: {ex.Message}";
         }
     }
 }
