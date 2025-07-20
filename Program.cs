@@ -2,6 +2,7 @@ using ModelContextProtocol.Server;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Net.Codecrete.QrCodeGenerator;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,6 +29,26 @@ await app.RunAsync();
 public static class LnAddressTools
 {
     private static readonly ILogger _logger = LoggerFactory.Create(builder => builder.AddConsole()).CreateLogger("LnAddressTools");
+
+    private static string GenerateQrCodeBase64(string text, int border = 2, int scale = 8)
+    {
+        try
+        {
+            var qr = QrCode.EncodeText(text, QrCode.Ecc.Medium);
+            var svg = qr.ToSvgString(border);
+
+            // Convert SVG to PNG Base64 using a simple approach
+            // For now, return the SVG directly as data URI
+            var svgBytes = System.Text.Encoding.UTF8.GetBytes(svg);
+            var svgBase64 = Convert.ToBase64String(svgBytes);
+            return $"svg+xml;base64,{svgBase64}";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate QR code for text: {Text}", text.Length > 20 ? text.Substring(0, 20) + "..." : text);
+            return "";
+        }
+    }
 
     [McpServerTool, Description("Creates a Lightning Network invoice (payment request) from a Lightning Address. Returns a BOLT11 invoice string that can be used to receive Bitcoin payments over the Lightning Network.")]
     public static async Task<string> CreateInvoice(
@@ -128,7 +149,36 @@ public static class LnAddressTools
             _logger.LogInformation($"Successfully created invoice for {address} with amount {amount} sats");
             _logger.LogDebug($"Generated invoice: {invoiceData.Pr}");
 
-            return invoiceData.Pr;
+            // Generate QR code for the invoice
+            var qrCodeBase64 = GenerateQrCodeBase64(invoiceData.Pr);
+
+            var result = new System.Text.StringBuilder();
+            result.AppendLine("⚡ Lightning Invoice Created Successfully!");
+            result.AppendLine("═══════════════════════════════════════");
+            result.AppendLine();
+            result.AppendLine($"📧 Lightning Address: {address}");
+            result.AppendLine($"💰 Amount: {amount:N0} sats");
+            result.AppendLine();
+            result.AppendLine("📄 BOLT11 Invoice:");
+            result.AppendLine($"```");
+            result.AppendLine(invoiceData.Pr);
+            result.AppendLine($"```");
+            result.AppendLine();
+
+            if (!string.IsNullOrEmpty(qrCodeBase64))
+            {
+                result.AppendLine("📱 QR Code for Mobile Wallet:");
+                result.AppendLine();
+                result.AppendLine($"![QR Code](data:image/{qrCodeBase64})");
+                result.AppendLine();
+                result.AppendLine("💡 Scan this QR code with any Lightning wallet to pay the invoice!");
+                result.AppendLine();
+            }
+
+            result.AppendLine("✅ Ready to receive payment!");
+            result.AppendLine("⚠️ Invoice typically expires in 1-24 hours");
+
+            return result.ToString();
         }
         catch (Exception ex)
         {
